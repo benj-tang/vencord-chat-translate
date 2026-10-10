@@ -1,0 +1,27 @@
+name: CI
+on:
+    push:
+    pull_request:
+    workflow_dispatch:
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - run: npm run format:check
+            - run: npm run check
+            - run: npm run test:worker
+            - run: npm run test:native
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 11.9.0
+            - run: npm run verify:vencord
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: chatTranslate-preview
+                  path: dist/chatTranslate.desktop/

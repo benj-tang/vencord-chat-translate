@@ -1,0 +1,36 @@
+{
+    "name": "vencord-chat-translate",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Local language detection and viewport-scoped contextual translation for Vencord desktop.",
+    "license": "GPL-3.0-or-later",
+    "type": "module",
+    "engines": {
+        "node": ">=22.18.0"
+    },
+    "scripts": {
+        "build": "node scripts/build.mjs",
+        "typecheck": "tsc --noEmit",
+        "test": "tsx --test tests/*.test.ts",
+        "lint": "eslint src tests scripts",
+        "format:check": "prettier --check src tests scripts *.json *.md docs .github",
+        "format": "prettier --write src tests scripts *.json *.md docs .github",
+        "check": "npm run typecheck && npm run lint && npm test && npm run build",
+        "verify:vencord": "node scripts/verify-vencord.mjs",
+        "test:worker": "node scripts/smoke-worker.mjs",
+        "test:native": "node scripts/smoke-native.mjs"
+    },
+    "dependencies": {
+        "fasttext.wasm.js": "1.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "26.0.1",
+        "@types/react": "19.1.0",
+        "eslint": "10.6.0",
+        "typescript-eslint": "8.62.1",
+        "esbuild": "0.28.1",
+        "prettier": "3.6.2",
+        "tsx": "4.22.4",
+        "typescript": "6.0.3"
+    }
+}

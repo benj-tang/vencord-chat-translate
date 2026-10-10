@@ -1,0 +1,67 @@
+.ct-accessory {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-left: 2px solid var(--text-link);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.ct-idle {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    height: 0;
+}
+
+.ct-text,
+.ct-preview {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.ct-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+.ct-accessory button,
+.ct-panel button {
+    background: transparent;
+    color: var(--text-link);
+    cursor: pointer;
+    padding: 4px;
+}
+
+.ct-panel {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-input {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px;
+    color: var(--text-normal);
+    background: var(--background-tertiary);
+    border: 1px solid var(--background-modifier-accent);
+    border-radius: 4px;
+}
+
+.ct-preview {
+    padding: 10px;
+    max-height: 240px;
+    overflow: auto;
+    background: var(--background-secondary);
+    border-radius: 4px;
+}
