@@ -4,12 +4,14 @@ import { ChatCompletionTranslator, ProviderError, type ProviderUsage } from "../
 import type { ProviderConfig, TranslationRequest } from "../core/types";
 import { WorkerDetector } from "../native/detector";
 import { resolveProviderConfig } from "../native/profile";
+import { PersistentTranslationCache, providerNamespace, type CacheOptions } from "../native/cache";
 import workerSource from "./generated/worker.json";
 
 const detector = new WorkerDetector(workerSource);
 let translator: ChatCompletionTranslator | null = null;
 let providerRevision = "";
 const requests = new Map<string, AbortController>();
+const diskCache = new PersistentTranslationCache();
 let detectionCalls = 0;
 let detectionItems = 0;
 const recentBatches: Array<
@@ -90,7 +92,7 @@ export async function translateBatch(
         });
         batch.results = results.length;
         batch.status = "success";
-        return { ok: true as const, results };
+        return { ok: true as const, results, cacheNamespace: providerNamespace(resolved) };
     } catch (error) {
         batch.status = "error";
         return {
@@ -111,7 +113,47 @@ export async function getDiagnostics(_: IpcMainInvokeEvent) {
         detectionCalls,
         detectionItems,
         batches: recentBatches.map((batch) => ({ ...batch })),
+        cache: diskCache.stats(),
     };
+}
+
+function validateCacheKeys(keys: string[]) {
+    if (
+        !Array.isArray(keys) ||
+        keys.length > 50 ||
+        !keys.every((key) => typeof key === "string" && key.length <= 100000) ||
+        JSON.stringify(keys).length > 2000000
+    )
+        throw new Error("Invalid cache keys");
+}
+
+export async function getCachedTranslations(
+    _: IpcMainInvokeEvent,
+    config: ProviderConfig,
+    keys: string[],
+    options: CacheOptions,
+) {
+    validateCacheKeys(keys);
+    const provider = await resolveProviderConfig(config);
+    return diskCache.get(providerNamespace(provider), keys, options);
+}
+
+export async function storeCachedTranslations(
+    _: IpcMainInvokeEvent,
+    values: Record<string, string>,
+    options: CacheOptions,
+    namespace: string,
+) {
+    if (!values || typeof values !== "object" || JSON.stringify(values).length > 4000000)
+        throw new Error("Invalid cached translations");
+    validateCacheKeys(Object.keys(values));
+    if (typeof namespace !== "string" || !/^[a-f0-9]{64}$/.test(namespace))
+        throw new Error("Invalid cache provider identity");
+    await diskCache.set(namespace, values, options);
+}
+
+export async function clearCachedTranslations(_: IpcMainInvokeEvent) {
+    await diskCache.clear();
 }
 
 export async function cancelRequest(_: IpcMainInvokeEvent, id: string) {

@@ -35,3 +35,6 @@ screenshot, a compiler result or an agent report alone.
 
 Checked items are recorded in [the 2026-10-10 live validation](LIVE-VALIDATION-2026-10-10.md).
 Unchecked combined checks may have synthetic coverage or partial live coverage.
+
+- [x] Persist actual incoming translations, restart Discord, verify disk hits and no new provider calls.
+- [ ] Restart the whole computer and repeat; test real UI disable/clear and long-term retention.

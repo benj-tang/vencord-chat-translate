@@ -9,7 +9,10 @@ included.
 
 - Author: Yuns / yunsii and contributors.
 - Source: https://github.com/yunsii/fasttext.wasm.js
-- Wrapper and included fastText engine: MIT.
+- JavaScript wrapper: MIT. Its notice credits Yuns.
+- Included fastText engine: MIT, copyright (c) 2016-present, Facebook, Inc.
+- Engine source/license: https://github.com/facebookresearch/fastText
+- The separate engine notice is in `docs/fasttext-engine-license.txt` and is copied into builds.
 - The build copies the dependency's MIT notice into the distributable.
 - The generated engine is bundled without modifying the model or engine source.
   The integration supplies local WASM bytes and manages native prediction vectors.
@@ -22,6 +25,10 @@ included.
 - License: CC BY-SA 3.0, independent of the JavaScript wrapper's MIT license.
 - This project embeds the unchanged compressed model as base64 for local loading.
 - The model license text is in `docs/model-license.txt` and is copied into builds.
+- Model references: Armand Joulin, Edouard Grave, Piotr Bojanowski and Tomas Mikolov,
+  "Bag of Tricks for Efficient Text Classification" (2016), https://arxiv.org/abs/1607.01759;
+  Armand Joulin, Edouard Grave, Piotr Bojanowski, Matthijs Douze, Herve Jegou and Tomas Mikolov,
+  "FastText.zip: Compressing text classification models" (2016), https://arxiv.org/abs/1612.03651.
 - Source packaging through npm is recorded in `package-lock.json`; distributing
   the plugin must retain these notices and the separate model license.
 

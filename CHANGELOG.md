@@ -31,4 +31,10 @@
 - Preserve translation cache and character budget across scope reloads; keep successful
   partial results out of later target batches.
 
+- Add native persistent incoming translation caching with 30-day expiry, LRU limits,
+  a 10 MiB byte cap, provider isolation, private permissions and atomic serialized writes.
+- Reuse valid disk entries after restart, validate restored tokens, preserve viewport
+  gating after asynchronous reads, and expose hit counts plus a two-tier clear action.
+- Include the separate Facebook/fastText MIT engine notice in source and build artifacts.
+
 See `docs/LIVE-VALIDATION-2026-10-10.md` for exact acceptance and remaining checks.

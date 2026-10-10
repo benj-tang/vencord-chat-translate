@@ -165,6 +165,24 @@ export const settings = definePluginSettings({
         default: 2,
         onChange,
     },
+    persistentCacheEnabled: {
+        type: OptionType.BOOLEAN,
+        description: "在本机保存消息译文，重启后复用；文件是私密明文缓存，可随时清空",
+        default: true,
+        onChange,
+    },
+    cacheRetentionDays: {
+        type: OptionType.NUMBER,
+        description: "本地译文缓存保留天数（1–365，默认 30），命中不会延长保存期限",
+        default: 30,
+        onChange,
+    },
+    cacheMaxEntries: {
+        type: OptionType.NUMBER,
+        description: "本地译文缓存最多条数（100–20000，默认 5000），文件上限 10 MiB",
+        default: 5000,
+        onChange,
+    },
     outputTokens: {
         type: OptionType.NUMBER,
         description: "每次请求的最大输出 token",

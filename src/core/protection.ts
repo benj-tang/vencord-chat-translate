@@ -3,6 +3,7 @@ import { PROTECTED_PATTERN } from "./language";
 
 export interface ProtectedText {
     text: string;
+    encode(translated: string): string;
     restore(translated: string): string;
 }
 
@@ -28,6 +29,15 @@ export function protectText(text: string, terms: string[], keepChinese = false):
     }
     return {
         text: protectedText,
+        encode(translated) {
+            const encoded = values.reduce(
+                (out, value, i) => out.replace(value, () => `${prefix}${i}]]`),
+                translated,
+            );
+            if (this.restore(encoded) !== translated)
+                throw new Error("Cached protected text changed");
+            return encoded;
+        },
         restore(translated) {
             for (let i = 0; i < values.length; i++) {
                 const marker = `${prefix}${i}]]`;

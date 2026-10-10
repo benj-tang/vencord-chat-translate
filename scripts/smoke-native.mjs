@@ -68,7 +68,9 @@ try {
     const detection = await native.detectLanguages(null, ["Your payout has been processed."]);
     assert.equal(detection[0][0].language, "en");
     const translation = await native.translateBatch(null, "native-test", config, request);
-    assert.deepEqual(translation, { ok: true, results: [{ id: "m0", text: "你好" }] });
+    assert.equal(translation.ok, true);
+    assert.deepEqual(translation.results, [{ id: "m0", text: "你好" }]);
+    assert.match(translation.cacheNamespace, /^[a-f0-9]{64}$/);
     const pending = native.translateBatch(
         null,
         "cancel-test",

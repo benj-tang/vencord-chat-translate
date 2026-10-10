@@ -49,6 +49,7 @@ import {
     statusHost,
     runtimeReady,
     runtimeActive,
+    clearTranslationCaches,
 } from "./runtime";
 
 export const TranslateIcon: IconComponent = ({ width = 20, height = 20, className }) => (
@@ -560,15 +561,20 @@ function ManualModal({ props, message }: { props: RenderModalProps; message: Mes
     );
 }
 
-export function clearCache(): void {
-    currentEngine().clearCache();
-    notifyUser("翻译缓存已清空", "success");
+export async function clearCache(): Promise<void> {
+    try {
+        await clearTranslationCaches();
+        notifyUser("内存和本地译文缓存已清空", "success");
+    } catch {
+        notifyUser("本地缓存未能清空，请检查文件权限。", "failure");
+    }
 }
 
 export function openDiagnostics(): void {
     openModal((props) => <DiagnosticsModal props={props} />);
 }
 function DiagnosticsModal({ props }: { props: RenderModalProps }) {
+    settings.use();
     const [stats, setStats] = useState<Awaited<ReturnType<typeof diagnostics>> | null>(null);
     useEffect(() => {
         let alive = true;
@@ -602,6 +608,16 @@ function DiagnosticsModal({ props }: { props: RenderModalProps }) {
                         <p>
                             本地识别：{stats.detectionCalls} 次 / {stats.detectionItems}{" "}
                             条；下表为最近 20 次原生翻译调用。
+                        </p>
+                        <p>
+                            本地缓存：{settings.store.persistentCacheEnabled ? "开启" : "关闭"} ·{" "}
+                            {stats.cache.entries} 条 · {(stats.cache.bytes / 1024).toFixed(1)} KiB ·{" "}
+                            本次启动命中 {stats.cache.hits} 次
+                            {stats.cache.status === "unavailable"
+                                ? " · 文件不可用，已回退到内存缓存"
+                                : stats.cache.status === "rebuilt"
+                                  ? " · 原缓存无效，已重建"
+                                  : ""}
                         </p>
                         <table className="ct-diagnostics">
                             <thead>

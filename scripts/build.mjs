@@ -33,7 +33,7 @@ const worker = bundled.outputFiles[0].text;
 await mkdir(join(output, "generated"), { recursive: true });
 await mkdir(join(output, "native"), { recursive: true });
 await cp(join(root, "src/core"), join(output, "core"), { recursive: true });
-for (const name of ["detector.ts", "profile.ts"])
+for (const name of ["detector.ts", "profile.ts", "cache.ts"])
     await cp(join(root, "src/native", name), join(output, "native", name));
 for (const name of [
     "index.tsx",
@@ -56,5 +56,9 @@ for (const name of ["LICENSE", "NOTICE.md"])
     await cp(join(root, name), join(output, "licenses", name));
 await cp(join(packageRoot, "LICENSE"), join(output, "licenses/fasttext-wrapper-MIT.txt"));
 await cp(join(root, "docs/model-license.txt"), join(output, "licenses/model-CC-BY-SA-3.0.txt"));
+await cp(
+    join(root, "docs/fasttext-engine-license.txt"),
+    join(output, "licenses/fasttext-engine-MIT.txt"),
+);
 console.log(`Plugin source package built: ${output}`);
 console.log(`Embedded worker: ${Math.ceil(Buffer.byteLength(worker) / 1024)} KiB`);

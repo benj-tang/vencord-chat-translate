@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import type { TranslationRequest } from "./types";
+
+export interface PersistentTranslations {
+    get(keys: string[]): Promise<Record<string, string>>;
+    set(values: Record<string, string>, request: TranslationRequest): Promise<void>;
+    clear(): Promise<void>;
+}
+
 export class Lru<T> {
     private data = new Map<string, T>();
     constructor(private readonly max = 1000) {}

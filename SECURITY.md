@@ -28,3 +28,11 @@ trusted by the operating system.
 
 The installed Discord client is not modified by development or verification
 scripts. Any future client installation is a separate user action.
+
+Incoming translations are persisted locally by default, with 30-day expiry and
+a 5000-entry / 10 MiB cap. The native file uses 0600 permissions in a 0700 directory
+on POSIX. It stores hashes and protected translations, not separate message
+originals, IDs or credentials. Translations themselves can still contain personal
+information; this is a private plaintext cache, not encrypted storage. You can
+disable persistence and clear both cache tiers in plugin settings. Expired entries
+are removed on cache access; no cleanup daemon runs while Discord is closed.

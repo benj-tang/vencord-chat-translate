@@ -6,8 +6,8 @@ import { TranslationEngine } from "../core/scheduler";
 import { cleanForDetection } from "../core/language";
 import { ProviderError } from "../core/provider";
 import { DailyBudget, Lru } from "../core/cache";
-import type { MessageInput, ViewState } from "../core/types";
-import { appConfig, onSettingsChange, providerConfig } from "./settings";
+import type { MessageInput, TranslationRequest, ViewState } from "../core/types";
+import { settings, appConfig, onSettingsChange, providerConfig } from "./settings";
 
 const Native = VencordNative.pluginHelpers.ChatTranslate as PluginNative<typeof import("./native")>;
 let engine: TranslationEngine | null = null;
@@ -24,6 +24,7 @@ const listeners = new Set<() => void>();
 let lastStatusKey: string | null = null;
 const sessionTranslations = new Lru<string>(1000);
 const sessionBudget = new DailyBudget(100000);
+const requestProviders = new WeakMap<TranslationRequest, string>();
 let cachedProvider = "";
 const notify = () => {
     for (const listener of listeners) listener();
@@ -59,6 +60,11 @@ export async function diagnostics() {
             [...nodes].some((node) => elements.get(node)?.visible),
         ).length,
     };
+}
+export async function clearTranslationCaches(): Promise<void> {
+    await Native.clearCachedTranslations();
+    engine?.clearCache();
+    sessionTranslations.clear();
 }
 export function viewState(key: string): ViewState {
     return engine?.state(key) ?? { status: "idle" };
@@ -220,6 +226,10 @@ export function startRuntime(): void {
             sessionTranslations.clear();
             cachedProvider = provider;
         }
+        const cacheOptions = () => ({
+            ttlDays: Math.max(1, Math.min(365, Math.floor(settings.store.cacheRetentionDays))),
+            maxEntries: Math.max(100, Math.min(20000, Math.floor(settings.store.cacheMaxEntries))),
+        });
         engine = new TranslationEngine(
             config,
             {
@@ -243,6 +253,7 @@ export function startRuntime(): void {
                                 response.retryAfterMs,
                                 response.pause,
                             );
+                        requestProviders.set(request, response.cacheNamespace);
                         return response.results;
                     } finally {
                         signal?.removeEventListener("abort", cancel);
@@ -252,6 +263,22 @@ export function startRuntime(): void {
             () => performance.now(),
             sessionTranslations,
             sessionBudget,
+            settings.store.persistentCacheEnabled
+                ? {
+                      get: (keys) =>
+                          Native.getCachedTranslations(providerConfig(), keys, cacheOptions()),
+                      set: async (values, request) => {
+                          const namespace = requestProviders.get(request);
+                          if (namespace)
+                              await Native.storeCachedTranslations(
+                                  values,
+                                  cacheOptions(),
+                                  namespace,
+                              );
+                      },
+                      clear: clearTranslationCaches,
+                  }
+                : undefined,
         );
         engine.subscribe(notify);
         runtimeRevision++;

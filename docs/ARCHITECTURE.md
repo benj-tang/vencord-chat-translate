@@ -60,13 +60,31 @@ anchored to the observed chat scroll root and works in read-only channels.
 Current toast rendering receives
 text and variant directly through `Toasts.show`.
 
-Caches are memory-only and bound to channel/message, original content/version,
+Session translations use a 1000-entry LRU bound to channel/message, original content/version,
 target, preserved terms and glossary.
 An existing cached translation retains the context from its original successful
 request. New neighboring messages do not force a paid refresh of unchanged text.
 Explicit retranslation bypasses that cache. Scope reloads preserve the shared
 1000-entry translation LRU and daily character budget; provider settings changes
-clear translations. Client restart loses both memory-only stores.
+clear session translations. Client restart loses the session LRU and daily character
+budget, but incoming translations are now restored from the optional native disk cache.
+
+The disk cache stores SHA-256 keys, protected translated text and creation/access
+timestamps. The key includes the actual endpoint/model/effort namespace and the
+message cache identity; no originals, credentials or Discord IDs are serialized
+as separate fields. Original code, URLs and Discord tokens are replaced by stable
+markers on disk and restored/validated from the current message before display.
+Translations may still contain personal names, amounts or preserved Chinese text.
+Native request identity is captured per response, so a profile change during a
+request cannot write its result into a different provider namespace.
+
+Defaults are 30 days, 5000 entries and 10 MiB. TTL uses creation time, not hits;
+reads/writes prune expiry, reads update LRU, writes merge through a serial queue,
+then fsync a 0600 temporary file and rename atomically inside a 0700 directory.
+Unsafe permissions and symbolic links are rejected; malformed files are rebuilt.
+Lookup failure or invalid protected tokens are misses, write failure leaves valid
+session results visible. Every async lookup rechecks visibility and content before
+automatic dispatch. Clearing removes both cache tiers; draft results are not stored.
 
 Automatic transient failures retry as batches, twice by default, after 2 and 5
 seconds. Each attempt rechecks visibility, target rules and character budget.

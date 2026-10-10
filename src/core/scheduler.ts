@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { DailyBudget, Lru } from "./cache";
+import { DailyBudget, Lru, type PersistentTranslations } from "./cache";
 import { resolveRule, validateConfig } from "./config";
 import { classify, translationTarget } from "./language";
 import { protectText } from "./protection";
@@ -50,6 +50,7 @@ export class TranslationEngine {
     private controllers = new Set<AbortController>();
     private slotListeners = new Set<() => void>();
     private pause: AutomaticPause | null = null;
+    private cacheEpoch = 0;
 
     constructor(
         readonly config: AppConfig,
@@ -58,6 +59,7 @@ export class TranslationEngine {
         private readonly clock = () => performance.now(),
         private readonly translations = new Lru<string>(1000),
         private readonly budget = new DailyBudget(config.maxDailyChars),
+        private readonly persistent?: PersistentTranslations,
     ) {
         validateConfig(config);
     }
@@ -82,6 +84,54 @@ export class TranslationEngine {
             this.config.preserveTerms,
             this.config.glossary,
         ]);
+    }
+
+    private async hydrate(
+        messages: Array<{ message: MessageInput; target: string }>,
+    ): Promise<void> {
+        if (!this.persistent || this.stopped) return;
+        const epoch = this.cacheEpoch;
+        const missing = messages.filter(
+            ({ message, target }) =>
+                this.translations.get(this.cacheKey(message, target)) === undefined,
+        );
+        for (let offset = 0; offset < missing.length; offset += 50) {
+            const chunk = missing.slice(offset, offset + 50);
+            const keys = chunk.map(({ message, target }) => this.cacheKey(message, target));
+            try {
+                const cached = await this.persistent.get(keys);
+                if (this.stopped || this.cacheEpoch !== epoch) return;
+                chunk.forEach(({ message }, i) => {
+                    const value = cached[keys[i]!];
+                    if (typeof value !== "string") return;
+                    try {
+                        const restored = protectText(message.text, []).restore(value);
+                        this.translations.set(keys[i]!, restored);
+                    } catch {
+                        // A stale or tampered protected value is a cache miss, never a displayed result.
+                    }
+                });
+            } catch {
+                // Disk availability must not block translation or create message-level errors.
+            }
+        }
+    }
+
+    private async persist(
+        values: Array<{ key: string; original: string; text: string }>,
+        request: TranslationRequest,
+    ): Promise<void> {
+        if (!this.persistent || this.stopped || !values.length) return;
+        const encoded: Record<string, string> = {};
+        for (const { key, original, text } of values) {
+            try {
+                encoded[key] = protectText(original, []).encode(text);
+            } catch {
+                // Keep a valid session translation even if it cannot be safely encoded for disk.
+            }
+        }
+        if (Object.keys(encoded).length)
+            await this.persistent.set(encoded, request).catch(() => {});
     }
 
     upsert(message: MessageInput): void {
@@ -198,6 +248,19 @@ export class TranslationEngine {
                     chunk.forEach((text, i) => this.detectionCache.set(text, result[i]!));
                 }
             }
+            const targets = candidates.flatMap(([, entry]) => {
+                if (!this.eligible(entry)) return [];
+                const detection = classify(
+                    entry.message.text,
+                    this.detectionCache.get(entry.message.text) ?? [],
+                );
+                const target = translationTarget(
+                    resolveRule(this.config, entry.message),
+                    detection,
+                );
+                return target ? [{ message: entry.message, target }] : [];
+            });
+            if (this.persistent) await this.hydrate(targets);
             if (this.stopped || !this.active || this.pause) return;
             for (const [key, snapshot] of candidates) {
                 const entry = this.entries.get(key);
@@ -386,6 +449,7 @@ export class TranslationEngine {
                 prepared.request,
             );
             if (this.stopped) return;
+            const persisted: Array<{ key: string; original: string; text: string }> = [];
             let index = 0;
             for (const item of prepared.request.items) {
                 if (item.mode !== "translate") continue;
@@ -403,6 +467,11 @@ export class TranslationEngine {
                 try {
                     const text = prepared.restore.get(item.id)!(result.text);
                     this.translations.set(entryRef.cacheKey, text);
+                    persisted.push({
+                        key: entryRef.cacheKey,
+                        original: entryRef.text,
+                        text,
+                    });
                     const entry = this.entries.get(entryRef.key);
                     if (
                         entry?.message.text === entryRef.text &&
@@ -424,6 +493,7 @@ export class TranslationEngine {
                     );
                 }
             }
+            await this.persist(persisted, prepared.request);
         } catch (error) {
             if (!this.stopped) {
                 const reason = error instanceof Error ? error.message : "Translation failed";
@@ -505,7 +575,7 @@ export class TranslationEngine {
             this.manualWaiting--;
         }
     }
-    async translateText(text: string, target: string): Promise<string> {
+    async translateText(text: string, target: string, persistKey?: string): Promise<string> {
         await this.acquireManualSlot();
         const controller = new AbortController();
         this.controllers.add(controller);
@@ -534,7 +604,13 @@ export class TranslationEngine {
             );
             if (this.stopped) throw new Error("Plugin stopped");
             if (!result[0]) throw new Error("Translation response was empty");
-            return protectedText.restore(result[0].text);
+            const translation = protectedText.restore(result[0].text);
+            if (persistKey)
+                await this.persist(
+                    [{ key: persistKey, original: text, text: translation }],
+                    request,
+                );
+            return translation;
         } finally {
             this.controllers.delete(controller);
             this.releaseSlot();
@@ -544,6 +620,21 @@ export class TranslationEngine {
         this.upsert(message);
         const key = messageKey(message);
         const cacheKey = this.cacheKey(message, target);
+        if (!force && this.persistent) {
+            this.manualWaiting++;
+            try {
+                await this.hydrate([{ message, target }]);
+            } finally {
+                this.manualWaiting--;
+            }
+        }
+        const current = this.entries.get(key);
+        if (
+            this.stopped ||
+            current?.message.text !== message.text ||
+            current.message.version !== message.version
+        )
+            return;
         const cached = !force && this.translations.get(cacheKey);
         if (cached) {
             this.entries.get(key)!.state = { status: "done", translation: cached };
@@ -554,7 +645,7 @@ export class TranslationEngine {
         this.entries.get(key)!.state = { status: "loading" };
         this.emit();
         try {
-            const translation = await this.translateText(message.text, target);
+            const translation = await this.translateText(message.text, target, cacheKey);
             this.translations.set(cacheKey, translation);
             const entry = this.entries.get(key);
             if (
@@ -578,6 +669,7 @@ export class TranslationEngine {
         }
     }
     clearCache(): void {
+        this.cacheEpoch++;
         this.translations.clear();
         this.detectionCache.clear();
         for (const entry of this.entries.values()) {
