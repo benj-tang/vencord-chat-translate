@@ -1,9 +1,10 @@
 # Security
 
 Do not include credentials or private Discord messages in public issue reports.
-Until a public repository with a private reporting channel exists, report
-security problems directly to the project maintainer through an agreed private
-channel. Do not invent a maintainer email address.
+Report vulnerabilities privately through
+[GitHub private vulnerability reporting](https://github.com/benj-tang/vencord-chat-translate/security/advisories/new).
+Use public issues for ordinary bugs with synthetic examples. Remove tokens,
+settings exports and private message content from all reports.
 
 The plugin sends translation material only to the endpoint configured by the
 user. HTTPS is required, except for HTTP loopback services. Redirects are rejected

@@ -1,5 +1,7 @@
 # ChatTranslate
 
+[![CI](https://github.com/benj-tang/vencord-chat-translate/actions/workflows/ci.yml/badge.svg)](https://github.com/benj-tang/vencord-chat-translate/actions/workflows/ci.yml)
+
 面向 Vencord 桌面端的独立翻译插件：本地识别语种，只自动翻译阅读视窗内的消息，支持上下文批量翻译和按需替换草稿。
 
 **当前为 0.1.0 开发预览。** 已在 macOS Discord 中验证 Magpie / DeepSeek Flash 接入、频道视窗自动批量翻译、直接替换及恢复纯文本草稿、三空格快捷触发和亮暗主题。完整验证范围及未完成项见 [实机记录](docs/LIVE-VALIDATION-2026-10-10.md)；构建本身不会安装客户端。
@@ -25,7 +27,10 @@
 需要 Node.js 22.18 或更新版本、npm，以及进行 Vencord 验证时使用的 pnpm 11.9.0。
 
 ```sh
+git clone https://github.com/benj-tang/vencord-chat-translate.git
+cd vencord-chat-translate
 npm ci --ignore-scripts
+npm run format:check
 npm run check
 npm run test:worker
 npm run test:native
@@ -71,4 +76,5 @@ npm run verify:vencord
 
 采用 [GPL-3.0-or-later](LICENSE)。模型和封装保留各自许可证，见 [NOTICE](NOTICE.md)。
 贡献说明见 [CONTRIBUTING](CONTRIBUTING.md)，安全问题报告见 [SECURITY](SECURITY.md)。
-此项目尚未公开发布；本地 Git 仓库不等于已创建 GitHub 仓库。
+公开仓库：[benj-tang/vencord-chat-translate](https://github.com/benj-tang/vencord-chat-translate)。
+这是独立的 Vencord 用户插件，尚未纳入 Vencord 官方插件列表；当前仅发布开发预览源码。
