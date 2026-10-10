@@ -54,8 +54,22 @@ MIT 的许可本身允许使用、复制、修改及分发，无需额外申请�
 1. `SECURITY.md` 提供仓库的 GitHub 私密安全报告入口；公开时启用 Private vulnerability reporting。
 2. CI 第三方 actions 固定经对应官方仓库 API 核对的完整 commit SHA，
    显式限制 `permissions: contents: read`，设置 20 分钟超时，产物缺失时检查失败。
-3. 首次公开后检查 Linux runner 的完整工作流，本地成功不能替代远端状态。
+3. 首次公开后已确认 Linux runner 的完整工作流成功，本地成功不能替代远端状态。
 4. README 标明开发预览，实机记录区分通过项和剩余范围；公开首版应继续保留这些边界。
 
 参考 GitHub 原始指南：
 https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+
+## 公开结果
+
+- 2026-10-10 已创建公开仓库：https://github.com/benj-tang/vencord-chat-translate 。
+- `main` 首次公开提交为 `55cb6d91123341bb9d3b03c81fe024478aa0d495`，
+  GitHub 远端提交与本地一致，Private vulnerability reporting 已启用。
+- 推送后复查全部 5 个提交、123 个独立历史 blob 及生成源码包：
+  已知私密值／常见凭证模式匹配为 0，构建包的已知私密值匹配为 0。
+- 本地格式、类型、lint、75 项测试、构建、worker/native 检查、
+  固定 Vencord 类型检查和桌面构建全部通过。
+- 首次 [GitHub Linux CI](https://github.com/benj-tang/vencord-chat-translate/actions/runs/38023656564)
+  实际完成且全部成功，预览源码包产物上传成功。
+- 公开范围为 0.1.0 开发预览源码；没有创建稳定版 release，
+  没有以 CI 结果替代剩余实机验收。
