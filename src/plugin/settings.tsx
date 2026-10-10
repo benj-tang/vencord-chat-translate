@@ -3,7 +3,7 @@ import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 import { React, useState } from "@webpack/common";
 import type { JSX } from "react";
-import { defaultConfig, presetRule, validateConfig } from "../core/config";
+import { defaultConfig, presetRule, snapshotScopes, validateConfig } from "../core/config";
 import type { AppConfig, Preset, ProviderConfig, ScopeOverride } from "../core/types";
 
 let changed: (() => void) | undefined;
@@ -103,9 +103,43 @@ export const settings = definePluginSettings({
     apiKey: { type: OptionType.COMPONENT, component: ApiKeyField, default: "", onChange },
     outputTarget: {
         type: OptionType.STRING,
-        description: "草稿按需翻译的目标语言（空白时按频道预设）",
-        default: "",
+        description: "输入框默认目标语言：en 英语、zh-CN 简体中文、ja 日语；空白跟随频道预设",
+        default: "en",
         onChange,
+    },
+    tripleSpaceEnabled: {
+        type: OptionType.BOOLEAN,
+        description: "输入框连续按三个空格，直接翻译并替换（不会发送）",
+        default: false,
+    },
+    tripleSpaceIntervalMs: {
+        type: OptionType.NUMBER,
+        description: "三个空格的相邻按键间隔上限，毫秒（默认 500）",
+        default: 500,
+    },
+    translationStyle: {
+        type: OptionType.SELECT,
+        description: "消息译文显示样式（随 Discord 亮色／暗色主题切换）",
+        options: [
+            { label: "原生文本", value: "plain", default: true },
+            { label: "引用", value: "quote" },
+            { label: "边框", value: "border" },
+            { label: "虚线分隔", value: "dashed" },
+            { label: "柔和文本", value: "muted" },
+            { label: "强调色", value: "accent" },
+            { label: "底色", value: "background" },
+            { label: "模糊阅读（悬停显示）", value: "blur" },
+        ],
+    },
+    translationFontSize: {
+        type: OptionType.NUMBER,
+        description: "译文字号，相对原文的百分比（70–150，默认 100）",
+        default: 100,
+    },
+    translationItalic: {
+        type: OptionType.BOOLEAN,
+        description: "译文使用斜体",
+        default: false,
     },
     maxChars: {
         type: OptionType.NUMBER,
@@ -115,7 +149,7 @@ export const settings = definePluginSettings({
     },
     dailyChars: {
         type: OptionType.NUMBER,
-        description: "每日请求内容字符上限（非费用估算，重启后重置）",
+        description: "每日请求内容字符上限（含重试，非费用估算；重启客户端后重置）",
         default: 100000,
         onChange,
     },
@@ -123,6 +157,12 @@ export const settings = definePluginSettings({
         type: OptionType.NUMBER,
         description: "翻译请求超时，毫秒",
         default: 30000,
+        onChange,
+    },
+    autoRetryCount: {
+        type: OptionType.NUMBER,
+        description: "自动翻译临时故障的额外重试次数（0–3，默认 2）；每次重试也计入字符预算",
+        default: 2,
         onChange,
     },
     outputTokens: {
@@ -150,10 +190,11 @@ export function appConfig(): AppConfig {
             .filter(Boolean),
         mappings: JSON.parse(settings.store.mappings),
     };
-    config.servers = structuredClone(settings.store.servers ?? {});
-    config.channels = structuredClone(settings.store.channels ?? {});
+    config.servers = snapshotScopes(settings.store.servers);
+    config.channels = snapshotScopes(settings.store.channels);
     config.maxChars = settings.store.maxChars;
     config.maxDailyChars = settings.store.dailyChars;
+    config.autoRetryCount = settings.store.autoRetryCount;
     validateConfig(config);
     return config;
 }

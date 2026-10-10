@@ -3,10 +3,18 @@ import "./styles.css";
 import { findGroupChildrenByChildId, type NavContextMenuPatchCallback } from "@api/ContextMenu";
 import definePlugin from "@utils/types";
 import type { Message } from "@vencord/discord-types";
-import { ChannelStore, Menu, React } from "@webpack/common";
-import { presetRule, resolveRule } from "../core/config";
+import { ChannelStore, ContextMenuApi, Menu, React } from "@webpack/common";
+import { presetRule, resolveRule, updateScopes } from "../core/config";
 import type { Preset, ScopeOverride } from "../core/types";
-import { input, manual, startRuntime, stopRuntime, forget, reloadRuntime } from "./runtime";
+import {
+    input,
+    manual,
+    startRuntime,
+    stopRuntime,
+    forget,
+    reloadRuntime,
+    notifyUser,
+} from "./runtime";
 import { settings, appConfig } from "./settings";
 import {
     clearCache,
@@ -15,38 +23,72 @@ import {
     MessageTranslation,
     openManualModal,
     TranslateIcon,
+    openDiagnostics,
+    scopeMessage,
 } from "./ui";
 
 function setScope(kind: "servers" | "channels", id: string, override: ScopeOverride | null) {
-    const values = { ...settings.store[kind] };
-    if (override) values[id] = override;
-    else delete values[id];
-    settings.store[kind] = values;
-    // Private settings do not have an onChange callback.
-    reloadRuntime();
+    try {
+        settings.store[kind] = updateScopes(settings.store[kind], id, override);
+        ContextMenuApi.closeContextMenu();
+        // Private settings do not have an onChange callback.
+        reloadRuntime();
+        notifyUser("翻译范围设置已保存", "success");
+    } catch {
+        notifyUser("翻译范围设置未保存，请重新选择。", "failure");
+    }
 }
 function scopeMenu(kind: "servers" | "channels", id: string) {
+    let config;
+    try {
+        config = appConfig();
+    } catch {
+        return (
+            <Menu.MenuItem
+                id={`ct-${kind}-invalid`}
+                label="翻译设置有误 · 查看状态"
+                action={openDiagnostics}
+            />
+        );
+    }
+    const override = config[kind][id];
+    const rule =
+        kind === "channels"
+            ? resolveRule(config, scopeMessage(id))
+            : resolveRule(config, { ...scopeMessage("0"), guildId: id });
+    const presetName = { bilingual: "中英阅读", english: "英文频道", chinese: "中文频道" };
     return (
         <Menu.MenuItem
             id={`ct-scope-${kind}`}
-            label={kind === "servers" ? "服务器翻译预设" : "频道翻译预设"}
+            label={`${kind === "servers" ? "服务器" : "频道"}翻译：${rule.enabled ? presetName[rule.preset] : "关闭"}${!override ? "（继承）" : ""}`}
         >
+            <Menu.MenuItem
+                id={`ct-${kind}-current`}
+                label={`当前：${rule.enabled ? "自动翻译" : "自动关闭"} · ${{ nonChinese: "非中文", selected: "指定语言", mappings: "对应表", all: "全部" }[rule.mode]} → ${rule.target}`}
+                disabled
+            />
             {(["bilingual", "english", "chinese"] as Preset[]).map((preset, i) => (
-                <Menu.MenuItem
+                <Menu.MenuRadioItem
+                    group={`ct-${kind}-preset`}
                     key={preset}
                     id={`ct-${kind}-${preset}`}
-                    label={["中英阅读", "英文频道", "中文频道"][i]}
+                    label={`${["中英阅读", "英文频道", "中文频道"][i]} · ${preset === "chinese" ? "自动关闭" : "自动开启"}`}
+                    checked={override?.preset === preset}
                     action={() => setScope(kind, id, presetRule(preset))}
                 />
             ))}
-            <Menu.MenuItem
+            <Menu.MenuRadioItem
+                group={`ct-${kind}-preset`}
                 id={`ct-${kind}-off`}
                 label="关闭此范围自动翻译"
+                checked={!!override && override.enabled === false && !override.preset}
                 action={() => setScope(kind, id, { enabled: false })}
             />
-            <Menu.MenuItem
+            <Menu.MenuRadioItem
+                group={`ct-${kind}-preset`}
                 id={`ct-${kind}-inherit`}
                 label="继承上级设置"
+                checked={!override}
                 action={() => setScope(kind, id, null)}
             />
         </Menu.MenuItem>
@@ -88,7 +130,12 @@ const messageMenu: NavContextMenuPatchCallback = (children, { message }: { messa
 };
 const channelMenu: NavContextMenuPatchCallback = (children, { channel }: any) => {
     if (channel?.id)
-        children.push(<Menu.MenuGroup>{scopeMenu("channels", channel.id)}</Menu.MenuGroup>);
+        children.push(
+            <Menu.MenuGroup>
+                {scopeMenu("channels", channel.id)}
+                <Menu.MenuItem id="ct-status" label="查看翻译状态" action={openDiagnostics} />
+            </Menu.MenuGroup>,
+        );
 };
 const guildMenu: NavContextMenuPatchCallback = (children, { guild }: any) => {
     if (guild?.id) children.push(<Menu.MenuGroup>{scopeMenu("servers", guild.id)}</Menu.MenuGroup>);
@@ -96,10 +143,16 @@ const guildMenu: NavContextMenuPatchCallback = (children, { guild }: any) => {
 
 export default definePlugin({
     name: "ChatTranslate",
-    description: "本地识别语种，翻译视窗内消息，并预览草稿译文。",
+    description: "本地识别语种，翻译视窗内消息，按需翻译并替换草稿。",
     authors: [{ name: "ChatTranslate contributors", id: 0n }],
     tags: ["Chat", "Utility", "Accessibility"],
     settings,
+    settingsAboutComponent: () => (
+        <div className="ct-panel">
+            <button onClick={openDiagnostics}>查看翻译状态</button>
+            <button onClick={clearCache}>清空翻译缓存</button>
+        </div>
+    ),
     start: startRuntime,
     stop: () => {
         void stopRuntime();
@@ -125,7 +178,7 @@ export default definePlugin({
         },
     },
     chatBarButton: { icon: TranslateIcon, render: DraftButton },
-    toolboxActions: { 清空翻译缓存: clearCache },
+    toolboxActions: { 查看翻译状态: openDiagnostics, 清空翻译缓存: clearCache },
     flux: {
         MESSAGE_DELETE({ id, channelId }: { id: string; channelId: string }) {
             forget(`${channelId}:${id}`);

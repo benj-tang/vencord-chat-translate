@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultConfig, presetRule, resolveRule, validateConfig } from "../src/core/config";
+import {
+    defaultConfig,
+    presetRule,
+    resolveRule,
+    snapshotScopes,
+    updateScopes,
+    validateConfig,
+} from "../src/core/config";
 import { classify, cleanForDetection, translationTarget } from "../src/core/language";
 import { protectText } from "../src/core/protection";
 import { DraftSession } from "../src/core/draft";
@@ -29,9 +36,38 @@ test("scope precedence and thread inheritance preserve explicit disable", () => 
     assert.equal(resolveRule(config, message).target, "en");
     assert.equal(resolveRule(config, message).preset, "english");
 });
+test("reactive scoped settings can be snapshotted without sharing mutable nested values", () => {
+    const rule = presetRule("bilingual");
+    const wrapped = new Proxy({ channel: new Proxy(rule, {}) }, {});
+    assert.throws(() => structuredClone(wrapped), /could not be cloned/);
+    const config = defaultConfig();
+    config.channels = snapshotScopes(wrapped);
+    validateConfig(config);
+    assert.equal(resolveRule(config, { ...message, channelId: "channel" }).enabled, true);
+    config.channels.channel!.sourceLanguages!.push("es");
+    assert.deepEqual(rule.sourceLanguages, ["en"]);
+});
+test("adding a second scope removes nested proxies before native settings serialization", () => {
+    const rule = presetRule("bilingual");
+    const existing = new Proxy({ first: new Proxy(rule, {}) }, {});
+    assert.throws(() => structuredClone({ ...existing, second: presetRule("english") }));
+    const updated = updateScopes(existing, "second", presetRule("english"));
+    assert.doesNotThrow(() => structuredClone(updated));
+    assert.equal(updated.first!.preset, "bilingual");
+    assert.equal(updated.second!.preset, "english");
+    assert.equal(Object.keys(existing).length, 1);
+    assert.deepEqual(Object.keys(updateScopes(updated, "second", null)), ["first"]);
+});
 test("global default is opt-in while Chinese preset is disabled", () => {
     assert.equal(defaultConfig().global.enabled, false);
     assert.equal(presetRule("chinese").enabled, false);
+});
+test("changing a daily limit preserves already reserved retry and request characters", () => {
+    const budget = new DailyBudget(1000);
+    budget.reserve(500);
+    budget.setLimit(600);
+    assert.throws(() => budget.reserve(101), /budget reached/);
+    budget.reserve(100);
 });
 test("configuration rejects too-short visibility, excessive batches and malformed mappings", () => {
     const config = defaultConfig();

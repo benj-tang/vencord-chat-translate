@@ -24,9 +24,12 @@ export class DailyBudget {
     private day = "";
     private used = 0;
     constructor(
-        private readonly limit: number,
+        private limit: number,
         private readonly now = () => new Date(),
     ) {}
+    setLimit(limit: number): void {
+        this.limit = limit;
+    }
     reserve(chars: number): void {
         const day = this.now().toISOString().slice(0, 10);
         if (day !== this.day) {

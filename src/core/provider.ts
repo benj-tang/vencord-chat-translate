@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { ProviderConfig, TranslationRequest, TranslationResult, Translator } from "./types";
 
+export interface ProviderUsage {
+    reasoningTokens: number | null;
+    completionTokens: number | null;
+}
+
+function tokenCount(value: unknown): number | null {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
 export class ProviderError extends Error {
     constructor(
         message: string,
         readonly retryable = false,
         readonly retryAfterMs = 0,
+        readonly pause: "credentials" | "rateLimit" | null = null,
     ) {
         super(message);
     }
@@ -82,16 +92,23 @@ export class ChatCompletionTranslator implements Translator {
     async translate(
         request: TranslationRequest,
         signal?: AbortSignal,
+        onUsage?: (usage: ProviderUsage) => void,
     ): Promise<TranslationResult[]> {
         if (signal?.aborted) throw new ProviderError("Translation cancelled or timed out");
         const endpoint = validateProvider(this.config);
         if (this.fatal)
-            throw new ProviderError("Translation paused: check provider credentials or settings");
+            throw new ProviderError(
+                "Translation paused: check provider credentials or settings",
+                false,
+                0,
+                "credentials",
+            );
         if (Date.now() < this.blockedUntil)
             throw new ProviderError(
                 "Translation paused by provider rate limit",
                 false,
                 this.blockedUntil - Date.now(),
+                "rateLimit",
             );
         if (
             request.items.length > 50 ||
@@ -105,6 +122,7 @@ export class ChatCompletionTranslator implements Translator {
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) controller.abort();
         const timeout = setTimeout(abort, this.config.timeoutMs);
+        let parsing = false;
         try {
             const response = await this.fetcher(endpoint, {
                 method: "POST",
@@ -156,11 +174,19 @@ export class ChatCompletionTranslator implements Translator {
                     `Translation provider returned HTTP ${response.status}`,
                     response.status >= 500,
                     delay,
+                    this.fatal ? "credentials" : response.status === 429 ? "rateLimit" : null,
                 );
             }
             const raw = await response.text();
             if (raw.length > 1000000) throw new ProviderError("Translation response is too large");
+            parsing = true;
             const data = JSON.parse(raw);
+            onUsage?.({
+                reasoningTokens: tokenCount(
+                    data.usage?.completion_tokens_details?.reasoning_tokens,
+                ),
+                completionTokens: tokenCount(data.usage?.completion_tokens),
+            });
             if (data.choices?.[0]?.finish_reason === "length")
                 throw new ProviderError("Translation output was truncated");
             const content = data.choices?.[0]?.message?.content;
@@ -174,8 +200,11 @@ export class ChatCompletionTranslator implements Translator {
         } catch (error) {
             if (error instanceof ProviderError) throw error;
             if (controller.signal.aborted)
-                throw new ProviderError("Translation cancelled or timed out");
-            throw new ProviderError("Translation failed: connection or response format error");
+                throw new ProviderError("Translation cancelled or timed out", !signal?.aborted);
+            throw new ProviderError(
+                "Translation failed: connection or response format error",
+                !parsing && error instanceof TypeError,
+            );
         } finally {
             clearTimeout(timeout);
             signal?.removeEventListener("abort", abort);

@@ -143,3 +143,54 @@ test("Magpie effort is explicit and separate reasoning is never rendered as a tr
     assert.deepEqual(await adapter.translate(request), [{ id: "m0", text: "你好" }]);
     assert.throws(() => validateProvider({ ...config, reasoningEffort: "none" as "low" }));
 });
+
+test("provider diagnostics report token counts without retaining reasoning content", async () => {
+    for (const [usage, expected] of [
+        [
+            { completion_tokens: 50, completion_tokens_details: { reasoning_tokens: 20 } },
+            { reasoningTokens: 20, completionTokens: 50 },
+        ],
+        [
+            { completion_tokens: 30, completion_tokens_details: { reasoning_tokens: 0 } },
+            { reasoningTokens: 0, completionTokens: 30 },
+        ],
+        [undefined, { reasoningTokens: null, completionTokens: null }],
+        [
+            { completion_tokens: -1, completion_tokens_details: { reasoning_tokens: "0" } },
+            { reasoningTokens: null, completionTokens: null },
+        ],
+    ]) {
+        let observed: unknown;
+        const adapter = new ChatCompletionTranslator(
+            config,
+            (async () =>
+                new Response(
+                    JSON.stringify({
+                        usage,
+                        choices: [
+                            {
+                                message: {
+                                    content: '[{"id":"m0","text":"你好"}]',
+                                    reasoning_content: "Private synthetic reasoning.",
+                                },
+                            },
+                        ],
+                    }),
+                )) as typeof fetch,
+        );
+        await adapter.translate(request, undefined, (value) => (observed = value));
+        assert.deepEqual(observed, expected);
+        assert.doesNotMatch(JSON.stringify(observed), /Private/);
+    }
+});
+test("network failures are retryable while malformed response objects are not", async () => {
+    const network = new ChatCompletionTranslator(config, (async () => {
+        throw new TypeError("Synthetic network failure");
+    }) as typeof fetch);
+    await assert.rejects(network.translate(request), (error: any) => error.retryable === true);
+    const malformed = new ChatCompletionTranslator(
+        config,
+        (async () => new Response("null")) as typeof fetch,
+    );
+    await assert.rejects(malformed.translate(request), (error: any) => error.retryable === false);
+});

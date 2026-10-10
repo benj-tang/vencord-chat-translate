@@ -3,7 +3,7 @@ import { DailyBudget, Lru } from "./cache";
 import { resolveRule, validateConfig } from "./config";
 import { classify, translationTarget } from "./language";
 import { protectText } from "./protection";
-import { validateResults } from "./provider";
+import { ProviderError, validateResults } from "./provider";
 import { messageKey } from "./types";
 import type {
     AppConfig,
@@ -23,6 +23,13 @@ interface Entry {
     state: ViewState;
     detection: Detection | null;
     considered: boolean;
+    attempts: number;
+    retryAt: number;
+}
+
+export interface AutomaticPause {
+    kind: "credentials" | "rateLimit" | "service" | "budget" | "local";
+    until: number | null;
 }
 
 interface Prepared {
@@ -34,7 +41,6 @@ interface Prepared {
 export class TranslationEngine {
     private entries = new Map<string, Entry>();
     private detectionCache = new Lru<Candidate[]>(2000);
-    private translations = new Lru<string>(1000);
     private listeners = new Set<() => void>();
     private active = true;
     private stopped = false;
@@ -43,16 +49,17 @@ export class TranslationEngine {
     private manualWaiting = 0;
     private controllers = new Set<AbortController>();
     private slotListeners = new Set<() => void>();
-    private budget: DailyBudget;
+    private pause: AutomaticPause | null = null;
 
     constructor(
         readonly config: AppConfig,
         private readonly detector: LocalDetector,
         private readonly translator: Translator,
         private readonly clock = () => performance.now(),
+        private readonly translations = new Lru<string>(1000),
+        private readonly budget = new DailyBudget(config.maxDailyChars),
     ) {
         validateConfig(config);
-        this.budget = new DailyBudget(config.maxDailyChars);
     }
 
     subscribe(listener: () => void): () => void {
@@ -72,7 +79,8 @@ export class TranslationEngine {
             message.text,
             message.version,
             target,
-            this.config,
+            this.config.preserveTerms,
+            this.config.glossary,
         ]);
     }
 
@@ -92,6 +100,8 @@ export class TranslationEngine {
             state: cached ? { status: "done", translation: cached } : { status: "idle" },
             detection: null,
             considered: !!cached,
+            attempts: 0,
+            retryAt: 0,
         });
         this.emit();
     }
@@ -128,20 +138,29 @@ export class TranslationEngine {
             this.clock() - entry.visibleSince >= this.config.visibleMs
         );
     }
-    private fail(key: string, text: string, error: string, version?: string): void {
+    private fail(
+        key: string,
+        text: string,
+        error: string,
+        version?: string,
+        automatic = true,
+    ): void {
         const entry = this.entries.get(key);
         if (entry?.message.text !== text || entry.message.version !== version) return;
-        entry.state = { status: "error", error };
+        entry.state = { status: "error", error, automatic };
         entry.considered = true;
     }
 
     async tick(): Promise<void> {
+        if (this.pause && this.pause.until !== null && this.clock() >= this.pause.until)
+            this.pause = null;
         if (
             !this.active ||
             this.stopped ||
             this.checking ||
             this.manualWaiting ||
-            this.running >= this.config.concurrency
+            this.running >= this.config.concurrency ||
+            this.pause
         )
             return;
         this.checking = true;
@@ -179,7 +198,7 @@ export class TranslationEngine {
                     chunk.forEach((text, i) => this.detectionCache.set(text, result[i]!));
                 }
             }
-            if (this.stopped || !this.active) return;
+            if (this.stopped || !this.active || this.pause) return;
             for (const [key, snapshot] of candidates) {
                 const entry = this.entries.get(key);
                 if (
@@ -189,6 +208,7 @@ export class TranslationEngine {
                     !this.eligible(entry)
                 )
                     continue;
+                if (entry.retryAt > this.clock()) continue;
                 const detection = classify(
                     entry.message.text,
                     this.detectionCache.get(entry.message.text) ?? [],
@@ -211,6 +231,7 @@ export class TranslationEngine {
             while (
                 !this.stopped &&
                 this.active &&
+                !this.pause &&
                 !this.manualWaiting &&
                 this.running < this.config.concurrency
             ) {
@@ -220,12 +241,15 @@ export class TranslationEngine {
                 for (const item of prepared.entries) {
                     const entry = this.entries.get(item.key)!;
                     entry.state.status = "loading";
+                    entry.state.automatic = true;
+                    entry.attempts++;
                 }
                 void this.dispatch(prepared).finally(() => this.releaseSlot());
             }
             this.emit();
         } catch {
             // Detector failures remain local and never silently enable a cloud fallback.
+            this.pause = { kind: "local", until: null };
             for (const [key, entry] of this.entries) {
                 if (!entry.considered && this.eligible(entry) && entry.state.status !== "loading") {
                     this.fail(
@@ -244,7 +268,10 @@ export class TranslationEngine {
 
     private prepare(): Prepared | null {
         const queued = [...this.entries.entries()]
-            .filter(([, e]) => e.state.status === "queued" && this.eligible(e))
+            .filter(
+                ([, e]) =>
+                    e.state.status === "queued" && this.eligible(e) && e.retryAt <= this.clock(),
+            )
             .sort((a, b) => a[1].message.timestamp - b[1].message.timestamp);
         const first = queued[0]?.[1];
         if (!first?.detection) return null;
@@ -398,15 +425,58 @@ export class TranslationEngine {
                 }
             }
         } catch (error) {
-            if (!this.stopped)
-                for (const item of prepared.entries) {
-                    this.fail(
-                        item.key,
-                        item.text,
-                        error instanceof Error ? error.message : "Translation failed",
-                        item.version,
+            if (!this.stopped) {
+                const reason = error instanceof Error ? error.message : "Translation failed";
+                const retryable =
+                    error instanceof ProviderError &&
+                    (error.retryable || error.pause === "rateLimit");
+                if (error instanceof ProviderError && error.pause === "credentials")
+                    this.pause = { kind: "credentials", until: null };
+                else if (error instanceof ProviderError && !retryable)
+                    this.pause = { kind: "service", until: null };
+                if (reason === "Daily character budget reached") {
+                    const now = new Date();
+                    const midnight = Date.UTC(
+                        now.getUTCFullYear(),
+                        now.getUTCMonth(),
+                        now.getUTCDate() + 1,
                     );
+                    this.pause = { kind: "budget", until: this.clock() + midnight - now.getTime() };
                 }
+                let nextRetry = 0;
+                let exhausted = false;
+                for (const item of prepared.entries) {
+                    const entry = this.entries.get(item.key);
+                    if (
+                        !entry ||
+                        entry.message.text !== item.text ||
+                        entry.message.version !== item.version
+                    )
+                        continue;
+                    if (retryable && entry.attempts <= this.config.autoRetryCount) {
+                        const delay = Math.max(
+                            entry.attempts === 1 ? 2000 : 5000,
+                            error instanceof ProviderError ? error.retryAfterMs : 0,
+                        );
+                        entry.retryAt = this.clock() + delay;
+                        nextRetry = Math.max(nextRetry, entry.retryAt);
+                        entry.state = { status: "queued", error: reason, automatic: true };
+                        entry.considered = false;
+                    } else {
+                        this.fail(item.key, item.text, reason, item.version);
+                        if (retryable) exhausted = true;
+                    }
+                }
+                if (exhausted) this.pause = { kind: "service", until: null };
+                else if (nextRetry && this.pause?.until !== null)
+                    this.pause = {
+                        kind:
+                            error instanceof ProviderError && error.pause === "rateLimit"
+                                ? "rateLimit"
+                                : "service",
+                        until: nextRetry,
+                    };
+            }
         } finally {
             this.controllers.delete(controller);
             this.emit();
@@ -501,6 +571,7 @@ export class TranslationEngine {
                 message.text,
                 error instanceof Error ? error.message : "Translation failed",
                 message.version,
+                false,
             );
         } finally {
             this.emit();
@@ -511,17 +582,69 @@ export class TranslationEngine {
         this.detectionCache.clear();
         for (const entry of this.entries.values()) {
             entry.considered = entry.state.status === "loading";
-            if (entry.state.status !== "loading") entry.state = { status: "idle" };
+            if (entry.state.status !== "loading") {
+                entry.state = { status: "idle" };
+                entry.attempts = 0;
+                entry.retryAt = 0;
+            }
         }
         this.emit();
     }
-    async stop(): Promise<void> {
+    failureSummary(channelId: string) {
+        const visible = [...this.entries.values()].filter(
+            (entry) =>
+                entry.message.channelId === channelId &&
+                entry.visibleSince !== null &&
+                entry.state.automatic,
+        );
+        return {
+            failed: visible.filter((entry) => entry.state.status === "error").length,
+            retrying: visible.filter(
+                (entry) => entry.state.error && ["queued", "loading"].includes(entry.state.status),
+            ).length,
+            pause: this.pause
+                ? {
+                      kind: this.pause.kind,
+                      remainingMs:
+                          this.pause.until === null
+                              ? null
+                              : Math.max(0, this.pause.until - this.clock()),
+                  }
+                : null,
+        };
+    }
+    retryVisible(channelId: string): void {
+        if (this.stopped || this.pause?.kind === "budget") return;
+        if (
+            this.pause?.kind === "rateLimit" &&
+            this.pause.until !== null &&
+            this.clock() < this.pause.until
+        )
+            return;
+        this.pause = null;
+        for (const entry of this.entries.values()) {
+            if (
+                entry.message.channelId !== channelId ||
+                entry.visibleSince === null ||
+                !entry.state.automatic ||
+                !["error", "queued"].includes(entry.state.status)
+            )
+                continue;
+            entry.considered = false;
+            entry.attempts = 0;
+            entry.retryAt = 0;
+            entry.state = { status: "queued", automatic: true };
+        }
+        this.emit();
+        void this.tick();
+    }
+    async stop(preserveTranslations = false): Promise<void> {
         this.stopped = true;
         for (const controller of this.controllers) controller.abort();
         for (const listener of this.slotListeners) listener();
         this.listeners.clear();
         this.entries.clear();
-        this.translations.clear();
+        if (!preserveTranslations) this.translations.clear();
         this.detectionCache.clear();
         await this.detector.close();
     }

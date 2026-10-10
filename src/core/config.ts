@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { AppConfig, MessageInput, Preset, Rule, ScopeOverride } from "./types";
 
+export function snapshotScopes(
+    scopes?: Record<string, ScopeOverride>,
+): Record<string, ScopeOverride> {
+    // Vencord settings are reactive proxies; structuredClone cannot clone them.
+    return JSON.parse(JSON.stringify(scopes ?? {}));
+}
+
+export function updateScopes(
+    scopes: Record<string, ScopeOverride> | undefined,
+    id: string,
+    override: ScopeOverride | null,
+): Record<string, ScopeOverride> {
+    const values = snapshotScopes(scopes);
+    if (override) values[id] = JSON.parse(JSON.stringify(override));
+    else delete values[id];
+    return values;
+}
+
 export function presetRule(preset: Preset): Rule {
     return {
         preset,
@@ -22,6 +40,7 @@ export function defaultConfig(): AppConfig {
         maxItems: 50,
         maxContext: 5,
         concurrency: 2,
+        autoRetryCount: 2,
         maxChars: 12000,
         maxDailyChars: 100000,
         skipReplies: [],
@@ -52,6 +71,7 @@ export function validateConfig(config: AppConfig): void {
     integer(config.maxItems, 1, 50, "maxItems");
     integer(config.maxContext, 0, 5, "maxContext");
     integer(config.concurrency, 1, 4, "concurrency");
+    integer(config.autoRetryCount, 0, 3, "autoRetryCount");
     integer(config.maxChars, 100, 50000, "maxChars");
     integer(config.maxDailyChars, 100, 10000000, "maxDailyChars");
     for (const rule of [

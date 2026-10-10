@@ -44,6 +44,7 @@ export interface AppConfig {
     maxItems: number;
     maxContext: number;
     concurrency: number;
+    autoRetryCount: number;
     maxChars: number;
     maxDailyChars: number;
     skipReplies: string[];
@@ -85,5 +86,6 @@ export interface ViewState {
     translation?: string;
     error?: string;
     detection?: Detection;
+    automatic?: boolean;
 }
 export const messageKey = (m: Pick<MessageInput, "channelId" | "id">) => `${m.channelId}:${m.id}`;

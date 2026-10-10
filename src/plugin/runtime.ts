@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { PluginNative } from "@utils/types";
-import { ChannelStore, SelectedChannelStore, showToast } from "@webpack/common";
+import { ChannelStore, SelectedChannelStore, Toasts } from "@webpack/common";
 import type { Message } from "@vencord/discord-types";
 import { TranslationEngine } from "../core/scheduler";
 import { cleanForDetection } from "../core/language";
+import { ProviderError } from "../core/provider";
+import { DailyBudget, Lru } from "../core/cache";
 import type { MessageInput, ViewState } from "../core/types";
 import { appConfig, onSettingsChange, providerConfig } from "./settings";
 
@@ -19,9 +21,20 @@ const viewportObservers = new Map<Element, IntersectionObserver>();
 const elements = new Map<Element, { key: string; root: Element; visible: boolean }>();
 const nodeRefs = new Map<Element, number>();
 const listeners = new Set<() => void>();
+let lastStatusKey: string | null = null;
+const sessionTranslations = new Lru<string>(1000);
+const sessionBudget = new DailyBudget(100000);
+let cachedProvider = "";
 const notify = () => {
     for (const listener of listeners) listener();
 };
+export function notifyUser(message: string, type: "success" | "failure"): void {
+    Toasts.show({
+        text: message,
+        variant: type === "failure" ? "critical" : "success",
+        duration: 6000,
+    });
+}
 export function revision(): number {
     return runtimeRevision;
 }
@@ -36,9 +49,49 @@ export function currentEngine(): TranslationEngine {
     if (!engine) throw new Error("ChatTranslate is not running or its settings are invalid");
     return engine;
 }
+export async function diagnostics() {
+    const native = await Native.getDiagnostics();
+    return {
+        ...native,
+        active: activity(),
+        observed: watched.size,
+        visible: [...watched.values()].filter((nodes) =>
+            [...nodes].some((node) => elements.get(node)?.visible),
+        ).length,
+    };
+}
 export function viewState(key: string): ViewState {
     return engine?.state(key) ?? { status: "idle" };
 }
+export function failureSummary(channelId: string) {
+    return engine?.failureSummary(channelId) ?? { failed: 0, retrying: 0, pause: null };
+}
+export function retryVisible(channelId: string): void {
+    engine?.retryVisible(channelId);
+}
+export function statusKey(channelId: string): string | null {
+    if (channelId !== SelectedChannelStore.getChannelId()) return null;
+    return (
+        [...watched.entries()]
+            .filter(
+                ([key, nodes]) =>
+                    key.startsWith(`${channelId}:`) &&
+                    [...nodes].some((node) => elements.get(node)?.visible),
+            )
+            .map(([key]) => key)
+            .sort()[0] ?? null
+    );
+}
+export function statusHost(channelId: string): Element | null {
+    const key = statusKey(channelId);
+    const node =
+        key && [...(watched.get(key) ?? [])].find((candidate) => elements.get(candidate)?.visible);
+    return node ? (elements.get(node)?.root.parentElement ?? null) : null;
+}
+export function runtimeReady(): boolean {
+    return !!engine;
+}
+export const runtimeActive = () => activity();
 export function input(message: Message): MessageInput {
     const channel = ChannelStore.getChannel(message.channel_id);
     const guildId = channel?.guild_id;
@@ -81,6 +134,11 @@ function synchronize(): void {
             key,
             activity() && sameChannel && [...nodes].some((node) => elements.get(node)?.visible),
         );
+    }
+    const key = statusKey(SelectedChannelStore.getChannelId());
+    if (key !== lastStatusKey) {
+        lastStatusKey = key;
+        notify();
     }
 }
 function scrollRoot(node: Element): Element | null {
@@ -147,7 +205,7 @@ export async function manual(
     try {
         await currentEngine().manual(message, target, force);
     } catch (error) {
-        showToast(error instanceof Error ? error.message : "翻译失败", "failure");
+        notifyUser(error instanceof Error ? error.message : "翻译失败", "failure");
     }
 }
 
@@ -156,6 +214,12 @@ export function startRuntime(): void {
     onSettingsChange(reloadRuntime);
     try {
         const config = appConfig();
+        sessionBudget.setLimit(config.maxDailyChars);
+        const provider = JSON.stringify(providerConfig());
+        if (provider !== cachedProvider) {
+            sessionTranslations.clear();
+            cachedProvider = provider;
+        }
         engine = new TranslationEngine(
             config,
             {
@@ -172,13 +236,22 @@ export function startRuntime(): void {
                     try {
                         if (signal?.aborted) throw new Error("Translation cancelled");
                         const response = await Native.translateBatch(id, providerConfig(), request);
-                        if (!response.ok) throw new Error(response.error);
+                        if (!response.ok)
+                            throw new ProviderError(
+                                response.error,
+                                response.retryable,
+                                response.retryAfterMs,
+                                response.pause,
+                            );
                         return response.results;
                     } finally {
                         signal?.removeEventListener("abort", cancel);
                     }
                 },
             },
+            () => performance.now(),
+            sessionTranslations,
+            sessionBudget,
         );
         engine.subscribe(notify);
         runtimeRevision++;
@@ -192,10 +265,10 @@ export function startRuntime(): void {
         synchronize();
         notify();
     } catch {
-        showToast("ChatTranslate 设置有误，请检查语言规则和批次限制。", "failure");
+        notifyUser("ChatTranslate 设置有误，请检查语言规则和批次限制。", "failure");
     }
 }
-async function cleanupRuntime(): Promise<void> {
+async function cleanupRuntime(preserveTranslations = false): Promise<void> {
     onSettingsChange();
     if (timer) clearInterval(timer);
     timer = null;
@@ -207,9 +280,10 @@ async function cleanupRuntime(): Promise<void> {
     watched.clear();
     elements.clear();
     nodeRefs.clear();
+    lastStatusKey = null;
     const old = engine;
     engine = null;
-    await old?.stop();
+    await old?.stop(preserveTranslations);
     runtimeRevision++;
     notify();
 }
@@ -221,8 +295,8 @@ export function reloadRuntime(): void {
     restartChain = restartChain
         .then(async () => {
             if (!desired) return;
-            await cleanupRuntime();
+            await cleanupRuntime(true);
             if (desired) startRuntime();
         })
-        .catch(() => showToast("翻译设置更新失败，请重新启用插件。", "failure"));
+        .catch(() => notifyUser("翻译设置更新失败，请重新启用插件。", "failure"));
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { IpcMainInvokeEvent } from "electron";
-import { ChatCompletionTranslator } from "../core/provider";
+import { ChatCompletionTranslator, ProviderError, type ProviderUsage } from "../core/provider";
 import type { ProviderConfig, TranslationRequest } from "../core/types";
 import { WorkerDetector } from "../native/detector";
 import { resolveProviderConfig } from "../native/profile";
@@ -10,6 +10,18 @@ const detector = new WorkerDetector(workerSource);
 let translator: ChatCompletionTranslator | null = null;
 let providerRevision = "";
 const requests = new Map<string, AbortController>();
+let detectionCalls = 0;
+let detectionItems = 0;
+const recentBatches: Array<
+    {
+        kind: "automatic" | "onDemand";
+        targets: number;
+        context: number;
+        results: number;
+        elapsedMs: number;
+        status: "running" | "success" | "error";
+    } & ProviderUsage
+> = [];
 
 // Chromium uses the client's system certificate trust, including private LAN CAs.
 const nativeFetch: typeof fetch = async (input, init) => {
@@ -26,6 +38,8 @@ export async function detectLanguages(_: IpcMainInvokeEvent, texts: string[]) {
     ) {
         throw new Error("Invalid detection input");
     }
+    detectionCalls++;
+    detectionItems += texts.length;
     return detector.detect(texts);
 }
 
@@ -47,6 +61,22 @@ export async function translateBatch(
         throw new Error("Invalid translation request");
     const controller = new AbortController();
     requests.set(id, controller);
+    const started = performance.now();
+    // Keep counts only; diagnostic history never retains chat text, IDs or credentials.
+    const batch = {
+        kind: request.items.every((item) => item.id === "draft")
+            ? ("onDemand" as const)
+            : ("automatic" as const),
+        targets: request.items.filter((item) => item.mode === "translate").length,
+        context: request.items.filter((item) => item.mode === "context").length,
+        results: 0,
+        elapsedMs: 0,
+        status: "running" as "running" | "success" | "error",
+        reasoningTokens: null as number | null,
+        completionTokens: null as number | null,
+    };
+    recentBatches.push(batch);
+    if (recentBatches.length > 20) recentBatches.shift();
     try {
         const resolved = await resolveProviderConfig(config);
         const revision = JSON.stringify(resolved);
@@ -55,16 +85,33 @@ export async function translateBatch(
             providerRevision = revision;
         }
         const activeTranslator = translator!;
-        const results = await activeTranslator.translate(request, controller.signal);
+        const results = await activeTranslator.translate(request, controller.signal, (usage) => {
+            Object.assign(batch, usage);
+        });
+        batch.results = results.length;
+        batch.status = "success";
         return { ok: true as const, results };
     } catch (error) {
+        batch.status = "error";
         return {
             ok: false as const,
             error: error instanceof Error ? error.message : "Translation failed",
+            retryable: error instanceof ProviderError && error.retryable,
+            retryAfterMs: error instanceof ProviderError ? error.retryAfterMs : 0,
+            pause: error instanceof ProviderError ? error.pause : null,
         };
     } finally {
+        batch.elapsedMs = Math.round(performance.now() - started);
         requests.delete(id);
     }
+}
+
+export async function getDiagnostics(_: IpcMainInvokeEvent) {
+    return {
+        detectionCalls,
+        detectionItems,
+        batches: recentBatches.map((batch) => ({ ...batch })),
+    };
 }
 
 export async function cancelRequest(_: IpcMainInvokeEvent, id: string) {

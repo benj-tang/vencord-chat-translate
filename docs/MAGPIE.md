@@ -36,6 +36,8 @@ Electron 使用系统网络栈。家庭 CA 须先得到操作系统信任；插�
 
 `low` 是思考强度，不代表关闭思考或零思考 token。网关可能转换协议和模型名，
 只解析 `choices[0].message.content` 的 JSON 译文，独立思考内容不显示。
+官方关闭参数、精确思考预算的文档边界和当前网关探测见
+[DeepSeek 思考调研](DEEPSEEK-THINKING.md)。
 
 ## 可选真实请求验收
 

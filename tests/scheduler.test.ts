@@ -5,6 +5,8 @@ import { setImmediate } from "node:timers/promises";
 import { defaultConfig, presetRule } from "../src/core/config";
 import { TranslationEngine } from "../src/core/scheduler";
 import { messageKey } from "../src/core/types";
+import { ProviderError } from "../src/core/provider";
+import { DailyBudget, Lru } from "../src/core/cache";
 import type {
     AppConfig,
     LocalDetector,
@@ -245,6 +247,265 @@ test("partial response keeps successful items without single-request fan-out", a
     assert.equal(f.engine.state("a:2").status, "error");
     assert.equal(f.requests.length, 1);
     await f.engine.stop();
+});
+test("transient failures retry bounded batches after 2 and 5 seconds", async () => {
+    let calls = 0;
+    const f = fixture(async (request) => {
+        if (++calls <= 2) throw new ProviderError("Temporary upstream failure", true);
+        return request.items
+            .filter((item) => item.mode === "translate")
+            .map((item) => ({ id: item.id, text: "成功" }));
+    });
+    for (let i = 1; i <= 30; i++) f.add(message(i));
+    f.setTime(1000);
+    await f.engine.tick();
+    await setImmediate();
+    assert.equal(f.engine.failureSummary("a").retrying, 30);
+    f.setTime(2999);
+    await f.engine.tick();
+    assert.equal(calls, 1);
+    f.setTime(3000);
+    await f.engine.tick();
+    await setImmediate();
+    f.setTime(7999);
+    await f.engine.tick();
+    assert.equal(calls, 2);
+    f.setTime(8000);
+    await f.engine.tick();
+    await setImmediate();
+    assert.deepEqual(
+        f.requests.map((request) => request.items.length),
+        [30, 30, 30],
+    );
+    assert.equal(f.engine.failureSummary("a").failed, 0);
+    assert.equal(f.engine.failureSummary("a").retrying, 0);
+    assert.equal(f.engine.state("a:1").status, "done");
+    await f.engine.stop();
+});
+test("retry exhaustion pauses new automatic work and aggregates visible failures", async () => {
+    const f = fixture(async () => {
+        throw new ProviderError("Temporary failure", true);
+    });
+    f.add(message(1));
+    f.add(message(2));
+    for (const time of [1000, 3000, 8000]) {
+        f.setTime(time);
+        await f.engine.tick();
+        await setImmediate();
+    }
+    assert.equal(f.requests.length, 3);
+    assert.deepEqual(f.engine.failureSummary("a"), {
+        failed: 2,
+        retrying: 0,
+        pause: { kind: "service", remainingMs: null },
+    });
+    f.add(message(3));
+    f.setTime(100000);
+    await f.engine.tick();
+    assert.equal(f.requests.length, 3);
+    f.engine.setVisible("a:1", false);
+    assert.equal(f.engine.failureSummary("a").failed, 1);
+    await f.engine.stop();
+});
+test("retrying a failed batch never resends offscreen targets", async () => {
+    let calls = 0;
+    const f = fixture(async (request) => {
+        if (++calls === 1) throw new ProviderError("Temporary failure", true);
+        return request.items
+            .filter((item) => item.mode === "translate")
+            .map((item) => ({ id: item.id, text: "成功" }));
+    });
+    f.add(message(1));
+    f.add(message(2));
+    f.setTime(1000);
+    await f.engine.tick();
+    await setImmediate();
+    f.engine.setVisible("a:1", false);
+    f.setTime(3000);
+    await f.engine.tick();
+    await setImmediate();
+    assert.equal(f.requests[1]!.items.length, 1);
+    assert.equal(f.engine.state("a:2").status, "done");
+    assert.equal(f.engine.state("a:1").translation, undefined);
+    await f.engine.stop();
+});
+test("429 blocks new automatic work until Retry-After, then retries as a batch", async () => {
+    let calls = 0;
+    const f = fixture(async (request) => {
+        if (++calls === 1) throw new ProviderError("HTTP 429", false, 10000, "rateLimit");
+        return request.items
+            .filter((item) => item.mode === "translate")
+            .map((item) => ({ id: item.id, text: "成功" }));
+    });
+    f.add(message(1));
+    f.setTime(1000);
+    await f.engine.tick();
+    await setImmediate();
+    f.add(message(2));
+    f.setTime(10999);
+    await f.engine.tick();
+    assert.equal(f.requests.length, 1);
+    f.setTime(11000);
+    await f.engine.tick();
+    await setImmediate();
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.requests[1]!.items.filter((item) => item.mode === "translate").length, 2);
+    await f.engine.stop();
+});
+test("credentials pause without automatic retries; an explicit retry can resume", async () => {
+    let fixed = false;
+    const f = fixture(async (request) => {
+        if (!fixed) throw new ProviderError("HTTP 401", false, 0, "credentials");
+        return request.items
+            .filter((item) => item.mode === "translate")
+            .map((item) => ({ id: item.id, text: "成功" }));
+    });
+    f.add(message(1));
+    f.setTime(1000);
+    await f.engine.tick();
+    await setImmediate();
+    assert.equal(f.engine.failureSummary("a").pause?.kind, "credentials");
+    f.setTime(100000);
+    await f.engine.tick();
+    assert.equal(f.requests.length, 1);
+    fixed = true;
+    f.engine.retryVisible("a");
+    await setImmediate();
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.engine.state("a:1").status, "done");
+    await f.engine.stop();
+});
+test("retry-all sends only visible failed targets, retaining successes only as context", async () => {
+    let calls = 0;
+    const f = fixture(async (request) => {
+        calls++;
+        return calls === 1
+            ? [{ id: "m0", text: "成功" }]
+            : request.items
+                  .filter((item) => item.mode === "translate")
+                  .map((item) => ({ id: item.id, text: "补译" }));
+    });
+    f.add(message(1));
+    f.add(message(2));
+    f.setTime(1000);
+    await f.engine.tick();
+    await setImmediate();
+    assert.equal(f.engine.failureSummary("a").failed, 1);
+    f.engine.retryVisible("a");
+    await setImmediate();
+    assert.deepEqual(
+        f.requests[1]!.items.map((item) => item.mode),
+        ["context", "translate"],
+    );
+    assert.equal(f.engine.state("a:1").translation, "成功");
+    assert.equal(f.engine.state("a:2").translation, "补译");
+    await f.engine.stop();
+});
+test("automatic retries can be disabled and format failures never retry blindly", async () => {
+    for (const retryable of [true, false]) {
+        const f = fixture(
+            async () => {
+                throw new ProviderError("Failure", retryable);
+            },
+            (config) => {
+                config.autoRetryCount = 0;
+            },
+        );
+        f.add(message(1));
+        f.setTime(1000);
+        await f.engine.tick();
+        await setImmediate();
+        f.setTime(10000);
+        await f.engine.tick();
+        assert.equal(f.requests.length, 1);
+        assert.equal(f.engine.state("a:1").status, "error");
+        await f.engine.stop();
+    }
+});
+test("scope-only engine reloads reuse translations, while target and glossary changes miss cache", async () => {
+    const cache = new Lru<string>(1000);
+    let calls = 0;
+    let time = 0;
+    const translate: Translator = {
+        translate: async (request) => {
+            calls++;
+            return request.items
+                .filter((item) => item.mode === "translate")
+                .map((item) => ({ id: item.id, text: "成功" }));
+        },
+    };
+    const config = defaultConfig();
+    config.channels.a = presetRule("bilingual");
+    const create = (value: AppConfig) =>
+        new TranslationEngine(value, detector, translate, () => time, cache);
+    const first = create(config);
+    first.upsert(message(1));
+    first.setVisible("a:1", true);
+    time = 1000;
+    await first.tick();
+    await setImmediate();
+    assert.equal(calls, 1);
+    await first.stop(true);
+    const updated = structuredClone(config);
+    updated.channels.b = presetRule("english");
+    updated.autoRetryCount = 0;
+    const second = create(updated);
+    second.upsert(message(1));
+    second.setVisible("a:1", true);
+    time = 2000;
+    await second.tick();
+    await setImmediate();
+    assert.equal(calls, 1);
+    assert.equal(second.state("a:1").translation, "成功");
+    await second.stop(true);
+    updated.channels.a!.target = "en";
+    const third = create(updated);
+    third.upsert(message(1));
+    assert.equal(third.state("a:1").translation, undefined);
+    await third.stop(true);
+    updated.channels.a!.target = "zh-CN";
+    updated.glossary.payout = "提取";
+    const fourth = create(updated);
+    fourth.upsert(message(1));
+    assert.equal(fourth.state("a:1").translation, undefined);
+    await fourth.stop();
+});
+test("a shared daily budget survives scope reload and stops retries without new provider calls", async () => {
+    const budget = new DailyBudget(700);
+    const cache = new Lru<string>(1000);
+    const config = defaultConfig();
+    config.global = presetRule("bilingual");
+    config.maxDailyChars = 700;
+    let time = 0;
+    let calls = 0;
+    const translator: Translator = {
+        translate: async (request) => {
+            calls++;
+            return request.items
+                .filter((item) => item.mode === "translate")
+                .map((item) => ({ id: item.id, text: "成功" }));
+        },
+    };
+    const first = new TranslationEngine(config, detector, translator, () => time, cache, budget);
+    first.upsert(message(1, "a", "A".repeat(350)));
+    first.setVisible("a:1", true);
+    time = 1000;
+    await first.tick();
+    await setImmediate();
+    assert.equal(calls, 1);
+    await first.stop(true);
+    const second = new TranslationEngine(config, detector, translator, () => time, cache, budget);
+    second.upsert(message(2, "a", "B".repeat(350)));
+    second.setVisible("a:2", true);
+    time = 2000;
+    await second.tick();
+    await setImmediate();
+    assert.equal(calls, 1);
+    assert.equal(second.failureSummary("a").pause?.kind, "budget");
+    second.retryVisible("a");
+    await setImmediate();
+    assert.equal(calls, 1);
+    await second.stop();
 });
 test("long single messages fail explicitly, smaller messages still run", async () => {
     const f = fixture(undefined, (config) => {

@@ -48,6 +48,9 @@ export async function resolveProviderConfig(
     } catch {
         throw new ProviderError(
             "Check the local ChatTranslate provider profile and its permissions",
+            false,
+            0,
+            "credentials",
         );
     }
 }

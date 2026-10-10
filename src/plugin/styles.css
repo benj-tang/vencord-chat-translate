@@ -1,11 +1,28 @@
+.ct-accessory,
+.ct-panel,
+.ct-draft-host {
+    --ct-text: var(--text-default, var(--text-normal, #dbdee1));
+    --ct-muted: var(--text-muted, var(--text-secondary, #949ba4));
+    --ct-accent: var(--text-link, #8bcaff);
+    --ct-surface: var(--background-surface-high, var(--background-secondary, #2b2d31));
+    --ct-border: var(--border-subtle, var(--background-modifier-accent, #4e5058));
+}
+
+.theme-light .ct-accessory,
+.theme-light .ct-panel,
+.theme-light .ct-draft-host {
+    --ct-text: var(--text-default, var(--text-normal, #313338));
+    --ct-muted: var(--text-muted, var(--text-secondary, #5c6068));
+    --ct-accent: var(--text-link, #005c99);
+    --ct-surface: var(--background-surface-high, var(--background-secondary, #f2f3f5));
+    --ct-border: var(--border-subtle, var(--background-modifier-accent, #c4c6cb));
+}
+
 .ct-accessory {
-    margin-top: 6px;
-    padding: 8px 10px;
-    border-left: 2px solid var(--text-link);
-    background: var(--background-secondary);
-    color: var(--text-normal);
-    border-radius: 4px;
-    font-size: 0.9em;
+    position: relative;
+    margin-top: 4px;
+    line-height: 1.45;
+    color: var(--ct-text);
 }
 
 .ct-idle {
@@ -15,28 +32,151 @@
     height: 0;
 }
 
-.ct-text,
-.ct-preview {
+.ct-text {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     user-select: text;
 }
 
+.ct-style-quote {
+    border-left: 3px solid var(--ct-border);
+    padding: 3px 10px;
+}
+
+.ct-style-border {
+    border: 1px solid var(--ct-border);
+    border-radius: 5px;
+    padding: 6px 10px;
+}
+
+.ct-style-dashed {
+    border-top: 1px dashed var(--ct-border);
+    padding-top: 5px;
+}
+
+.ct-style-muted .ct-text {
+    color: var(--ct-muted);
+}
+
+.ct-style-accent .ct-text {
+    color: var(--ct-accent);
+}
+
+.ct-style-background {
+    background: var(--ct-surface);
+    border-radius: 5px;
+    padding: 6px 10px;
+}
+
+.ct-style-blur .ct-text {
+    filter: blur(4px);
+    transition: filter 150ms ease;
+}
+
+.ct-style-blur:hover .ct-text,
+.ct-style-blur:focus-within .ct-text {
+    filter: none;
+}
+
 .ct-actions {
+    position: absolute;
+    right: 0;
+    top: -10px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-top: 6px;
-    color: var(--text-muted);
-    font-size: 0.85em;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--ct-border);
+    border-radius: 5px;
+    background: var(--ct-surface);
+    box-shadow: 0 2px 6px #0002;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 100ms ease;
+    z-index: 1;
+}
+
+.ct-accessory:hover .ct-actions,
+.ct-accessory:focus-within .ct-actions,
+:where([id^="chat-messages-"], [data-list-item-id^="chat-messages"]):hover .ct-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.ct-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    color: var(--ct-muted);
+    border-radius: 3px;
+}
+
+.ct-actions button:hover,
+.ct-actions button:focus-visible {
+    color: var(--ct-text);
+    background: color-mix(in srgb, var(--ct-text) 10%, transparent);
 }
 
 .ct-accessory button,
 .ct-panel button {
     background: transparent;
-    color: var(--text-link);
+    color: var(--ct-accent);
     cursor: pointer;
     padding: 4px;
+    border: 0;
+}
+
+.ct-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ct-muted);
+    font-size: 0.85em;
+}
+
+.ct-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    box-sizing: border-box;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: ct-spin 800ms linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes ct-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.ct-draft-host {
+    position: relative;
+}
+
+.ct-draft-busy {
+    background: color-mix(in srgb, var(--ct-accent) 7%, transparent);
+    border-radius: 4px;
+}
+
+.ct-draft-wait {
+    position: absolute;
+    right: 8px;
+    bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 8px;
+    color: var(--ct-text);
+    background: var(--ct-surface);
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 2;
 }
 
 .ct-panel {
@@ -44,6 +184,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    color: var(--ct-text);
 }
 
 .ct-input {
@@ -52,16 +193,79 @@
     width: 100%;
     margin-top: 6px;
     padding: 8px;
-    color: var(--text-normal);
-    background: var(--background-tertiary);
-    border: 1px solid var(--background-modifier-accent);
+    color: var(--ct-text);
+    background: var(--ct-surface);
+    border: 1px solid var(--ct-border);
     border-radius: 4px;
 }
 
-.ct-preview {
-    padding: 10px;
-    max-height: 240px;
-    overflow: auto;
-    background: var(--background-secondary);
-    border-radius: 4px;
+.ct-diagnostics {
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.ct-diagnostics th,
+.ct-diagnostics td {
+    text-align: left;
+    padding: 6px;
+    border-bottom: 1px solid var(--ct-border);
+}
+
+:where(.ct-channel-host) {
+    position: relative;
+}
+
+.ct-channel-status {
+    position: absolute;
+    top: 8px;
+    right: 18px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: calc(100% - 36px);
+    padding: 5px 9px;
+    border-radius: 6px;
+    color: var(--text-default, var(--text-normal, #dbdee1));
+    background: var(--background-surface-high, var(--background-secondary, #2b2d31));
+    box-shadow: 0 1px 4px #0002;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.theme-light .ct-channel-status {
+    color: var(--text-default, var(--text-normal, #313338));
+    background: var(--background-surface-high, var(--background-secondary, #f2f3f5));
+}
+
+.ct-channel-status button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+}
+
+.ct-channel-status button:hover {
+    text-decoration: underline;
+}
+.ct-channel-status button:disabled {
+    opacity: 0.5;
+    cursor: default;
+    text-decoration: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ct-actions,
+    .ct-style-blur .ct-text {
+        transition: none;
+    }
+    .ct-spinner {
+        animation-duration: 1600ms;
+    }
 }
