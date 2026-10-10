@@ -14,7 +14,8 @@ Vencord message accessory / context menu / composer button
 - `src/core`: platform-independent rules, detection interpretation, content
   protection, budgets, memory cache, scheduler, provider protocol and draft guards.
 - `src/native`: fastText worker and worker lifecycle. Build embeds the unchanged
-  model and WASM; inference has no network dependency.
+  model and WASM; inference has no network dependency. The private provider
+  profile is read in the native process and never returned over IPC.
 - `src/plugin`: Vencord UI, private scope overrides, settings and IPC.
 - `scripts/build.mjs`: makes a self-contained user-plugin source package.
 - `scripts/verify-vencord.mjs`: pinned Vencord typecheck and desktop build.
@@ -45,3 +46,12 @@ Batch failures and missing items are surfaced for manual retry in 0.1.0. There i
 no automatic single-message fan-out and no infinite retry loop. Provider 429
 responses pause the provider until its Retry-After; credential/config failures
 pause it until provider configuration is replaced.
+
+The local profile supplies endpoint, model, key and optional reasoning effort;
+UI settings still supply timeout and output-token limits. Custom endpoints and
+profile credentials are never merged. Each request rereads the profile, so a
+credential rotation creates a new translator without restarting Discord.
+Electron uses `net.fetch` for the operating system's private-CA trust. Node-only
+loopback tests use ordinary fetch; they do not establish Electron certificate
+behavior. Separate reasoning fields are ignored; malformed final output fails
+validation instead of being displayed.

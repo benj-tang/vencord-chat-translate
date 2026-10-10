@@ -9,4 +9,8 @@
 - Establish an independent Git repository, GPL license, third-party notices,
   deterministic dependency lock, tests and CI.
 
-Client acceptance and a real configured translation provider remain pending.
+- Add private native-only provider profiles and Magpie / DeepSeek V4 Flash setup.
+- Use Electron system networking for trusted private LAN HTTPS certificates.
+- Add explicit reasoning effort and an opt-in real-provider synthetic probe.
+
+Discord client acceptance remains pending.

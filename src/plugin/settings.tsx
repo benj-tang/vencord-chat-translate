@@ -16,7 +16,7 @@ function ApiKeyField({ setValue }: { setValue(value: string): void }): JSX.Eleme
     const [value, setLocal] = useState(settings.store.apiKey ?? "");
     return (
         <label>
-            翻译接口密钥
+            自定义接口密钥
             <input
                 className="ct-input"
                 type="password"
@@ -82,13 +82,24 @@ export const settings = definePluginSettings({
         default: true,
         onChange,
     },
+    useLocalProfile: {
+        type: OptionType.BOOLEAN,
+        description: "使用本机连接配置（~/.config/chat-translate/provider.json）",
+        default: true,
+        onChange,
+    },
     endpoint: {
         type: OptionType.STRING,
-        description: "兼容接口的完整 chat/completions 地址",
+        description: "自定义模式：兼容接口的完整 chat/completions 地址",
         default: "",
         onChange,
     },
-    model: { type: OptionType.STRING, description: "翻译模型名称", default: "", onChange },
+    model: {
+        type: OptionType.STRING,
+        description: "自定义模式：翻译模型名称",
+        default: "",
+        onChange,
+    },
     apiKey: { type: OptionType.COMPONENT, component: ApiKeyField, default: "", onChange },
     outputTarget: {
         type: OptionType.STRING,
@@ -154,5 +165,6 @@ export function providerConfig(): ProviderConfig {
         apiKey: settings.store.apiKey,
         timeoutMs: settings.store.timeoutMs,
         maxOutputTokens: settings.store.outputTokens,
+        useLocalProfile: settings.store.useLocalProfile,
     };
 }

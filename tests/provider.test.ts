@@ -52,6 +52,7 @@ test("adapter sends contextual request and parses JSON fences without reasoning 
     const adapter = new ChatCompletionTranslator(config, (async (_url, init) => {
         payload = JSON.parse(init!.body as string);
         assert.equal(init!.redirect, "error");
+        assert.equal(init!.credentials, "omit");
         assert.equal(
             (init!.headers as Record<string, string>).Authorization,
             "Bearer synthetic-secret",
@@ -116,4 +117,29 @@ test("a pre-cancelled request never starts a provider request", async () => {
     }) as typeof fetch);
     await assert.rejects(adapter.translate(request, controller.signal), /cancelled or timed out/);
     assert.equal(calls, 0);
+});
+test("Magpie effort is explicit and separate reasoning is never rendered as a translation", async () => {
+    const adapter = new ChatCompletionTranslator({ ...config, reasoningEffort: "low" }, (async (
+        _url,
+        init,
+    ) => {
+        const payload = JSON.parse(init!.body as string);
+        assert.equal(payload.reasoning_effort, "low");
+        assert.equal(payload.thinking, undefined);
+        return new Response(
+            JSON.stringify({
+                choices: [
+                    {
+                        finish_reason: "stop",
+                        message: {
+                            reasoning_content: "Synthetic reasoning that must stay private.",
+                            content: '[{"id":"m0","text":"你好"}]',
+                        },
+                    },
+                ],
+            }),
+        );
+    }) as typeof fetch);
+    assert.deepEqual(await adapter.translate(request), [{ id: "m0", text: "你好" }]);
+    assert.throws(() => validateProvider({ ...config, reasoningEffort: "none" as "low" }));
 });

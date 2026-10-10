@@ -56,6 +56,8 @@ export interface ProviderConfig {
     apiKey: string;
     timeoutMs: number;
     maxOutputTokens: number;
+    reasoningEffort?: "low" | "high" | "max";
+    useLocalProfile?: boolean;
 }
 export interface TranslationItem {
     id: string;

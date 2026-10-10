@@ -14,9 +14,17 @@ are validated. Model output is untrusted and may still be a poor translation.
 Prompt instructions reduce instruction-following risk but do not establish a
 security guarantee.
 
-API keys are stored in local Vencord settings, not an OS credential vault.
-Do not share those settings. Errors deliberately omit provider response bodies,
-request contents and credentials.
+In local-profile mode, credentials are read only by the native process from
+`~/.config/chat-translate/provider.json`. POSIX group/other permissions must be
+absent (use 0600). The profile completely replaces the endpoint, model and key;
+its key is never combined with an endpoint supplied by the renderer.
+It is a private plaintext file, not an OS credential vault.
+In custom mode, keys remain in local Vencord settings; do not share those settings.
+Errors deliberately omit provider response bodies, request contents and credentials.
+
+Electron requests use Chromium's network stack and system certificate trust.
+Certificate verification remains enabled; private LAN certificates must be
+trusted by the operating system.
 
 The installed Discord client is not modified by development or verification
 scripts. Any future client installation is a separate user action.

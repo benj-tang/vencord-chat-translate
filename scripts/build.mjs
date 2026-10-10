@@ -33,7 +33,8 @@ const worker = bundled.outputFiles[0].text;
 await mkdir(join(output, "generated"), { recursive: true });
 await mkdir(join(output, "native"), { recursive: true });
 await cp(join(root, "src/core"), join(output, "core"), { recursive: true });
-await cp(join(root, "src/native/detector.ts"), join(output, "native/detector.ts"));
+for (const name of ["detector.ts", "profile.ts"])
+    await cp(join(root, "src/native", name), join(output, "native", name));
 for (const name of [
     "index.tsx",
     "native.ts",

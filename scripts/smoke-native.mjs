@@ -14,6 +14,7 @@ await build({
     platform: "node",
     format: "cjs",
     target: "node22",
+    external: ["electron"],
 });
 const native = (await import(pathToFileURL(resolve(".cache/native-smoke.cjs")).href)).default;
 let requestSeen = 0;

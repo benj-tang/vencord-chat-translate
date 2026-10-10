@@ -18,7 +18,9 @@
         "check": "npm run typecheck && npm run lint && npm test && npm run build",
         "verify:vencord": "node scripts/verify-vencord.mjs",
         "test:worker": "node scripts/smoke-worker.mjs",
-        "test:native": "node scripts/smoke-native.mjs"
+        "test:native": "node scripts/smoke-native.mjs",
+        "configure:magpie": "node scripts/configure-magpie.mjs",
+        "test:magpie": "node scripts/smoke-magpie.mjs"
     },
     "dependencies": {
         "fasttext.wasm.js": "1.0.0"

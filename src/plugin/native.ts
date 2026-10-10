@@ -3,12 +3,20 @@ import type { IpcMainInvokeEvent } from "electron";
 import { ChatCompletionTranslator } from "../core/provider";
 import type { ProviderConfig, TranslationRequest } from "../core/types";
 import { WorkerDetector } from "../native/detector";
+import { resolveProviderConfig } from "../native/profile";
 import workerSource from "./generated/worker.json";
 
 const detector = new WorkerDetector(workerSource);
 let translator: ChatCompletionTranslator | null = null;
 let providerRevision = "";
 const requests = new Map<string, AbortController>();
+
+// Chromium uses the client's system certificate trust, including private LAN CAs.
+const nativeFetch: typeof fetch = async (input, init) => {
+    if (!process.versions.electron) return fetch(input, init);
+    const { net } = await import("electron");
+    return net.fetch(input, init);
+};
 
 export async function detectLanguages(_: IpcMainInvokeEvent, texts: string[]) {
     if (
@@ -37,15 +45,17 @@ export async function translateBatch(
         JSON.stringify(request).length > 200000
     )
         throw new Error("Invalid translation request");
-    const revision = JSON.stringify(config);
-    if (revision !== providerRevision) {
-        translator = new ChatCompletionTranslator(config);
-        providerRevision = revision;
-    }
     const controller = new AbortController();
     requests.set(id, controller);
     try {
-        const results = await translator!.translate(request, controller.signal);
+        const resolved = await resolveProviderConfig(config);
+        const revision = JSON.stringify(resolved);
+        if (revision !== providerRevision) {
+            translator = new ChatCompletionTranslator(resolved, nativeFetch);
+            providerRevision = revision;
+        }
+        const activeTranslator = translator!;
+        const results = await activeTranslator.translate(request, controller.signal);
         return { ok: true as const, results };
     } catch (error) {
         return {
